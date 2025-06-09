@@ -12,7 +12,7 @@ exports.getCheckoutSession = catchAsync(async (req, res, next) => {
     return res.status(404).json({ status: 'fail', message: 'Tour not found' });
   }
 
-  // 2) Create checkout session with updated Stripe API format
+  // 2) Create checkout session
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
     success_url: `${req.protocol}://${req.get('host')}/my-tours?alert=booking`,
@@ -23,7 +23,7 @@ exports.getCheckoutSession = catchAsync(async (req, res, next) => {
       {
         price_data: {
           currency: 'usd',
-          unit_amount: tour.price * 100, // amount in cents
+          unit_amount: tour.price * 100,
           product_data: {
             name: `${tour.name} Tour`,
             description: tour.summary,
@@ -40,23 +40,26 @@ exports.getCheckoutSession = catchAsync(async (req, res, next) => {
     mode: 'payment'
   });
 
-  // 3) Send session as response
+  // 3) Send session to client
   res.status(200).json({
     status: 'success',
     session
   });
 });
 
-// Updated to use 'amount_total' for price and session object properly
+// Booking creation after payment success
 const createBookingCheckout = async session => {
   const tour = session.client_reference_id;
   const user = (await User.findOne({ email: session.customer_email })).id;
-  const price = session.amount_total / 100; // amount_total is in cents
+  const price = session.amount_total / 100;
+
+  console.log('🔔 Creating booking:', { tour, user, price });
 
   await Booking.create({ tour, user, price });
 };
 
-exports.webhookCheckout = (req, res, next) => {
+// Stripe webhook
+exports.webhookCheckout = async (req, res, next) => {
   const signature = req.headers['stripe-signature'];
 
   let event;
@@ -70,8 +73,10 @@ exports.webhookCheckout = (req, res, next) => {
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
 
+  console.log('✅ Stripe Webhook received:', event.type);
+
   if (event.type === 'checkout.session.completed') {
-    createBookingCheckout(event.data.object);
+    await createBookingCheckout(event.data.object);
   }
 
   res.status(200).json({ received: true });
